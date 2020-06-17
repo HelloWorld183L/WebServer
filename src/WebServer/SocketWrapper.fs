@@ -13,7 +13,7 @@ type StateObject() =
 let serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
 
 let rec readCallback (result : IAsyncResult) =
-    let state = (StateObject) result.AsyncState
+    let state = result.AsyncState :?> StateObject
     let handler = state.WorkSocket
 
     let read = handler.EndReceive(result)
@@ -24,12 +24,10 @@ let rec readCallback (result : IAsyncResult) =
     else
         if state.StringBuilder.Length > 1 then
             let content = state.StringBuilder.ToString()
-            Console.WriteLine "Read %i bytes from socket.\n Data : %s" content.Length content
+            printfn "Read %i bytes from socket.\n Data : %s" content.Length content
         handler.Close()
 
-let rec setupSocket =
-    let clientSockets = []
-
+let rec setupSocket () =
     serverSocket.Bind(new IPEndPoint(IPAddress.Any, 80))
     serverSocket.Listen(10)
     serverSocket.BeginAccept(new AsyncCallback(readCallback), serverSocket)

@@ -2,6 +2,7 @@
 
 open System
 open System.Net.Sockets
+open SocketWrapper
 
 let rec serverLoop() =
     
@@ -9,6 +10,6 @@ let rec serverLoop() =
 
 [<EntryPoint>]
 let main argv =
-
+    setupSocket()
     serverLoop()
     0 // return an integer exit code
