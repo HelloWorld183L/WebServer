@@ -7,27 +7,64 @@ open System.Text
 type StateObject() =
     member this.WorkSocket : Socket = null
     member this.BufferSize = 1024
-    member this.Buffer : byte [] = [||]
+    member this.Buffer : byte [] = Array.zeroCreate 1024
     member this.StringBuilder = new StringBuilder()
 
-let serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
+let buffer : byte [] = Array.zeroCreate 1024
+
+let sendCallback (result : IAsyncResult) =
+    try
+        let handler = result.AsyncState :?> Socket
+
+        let bytesSent = handler.EndSend(result)
+        printfn "Sent %i bytes to client" bytesSent
+
+        handler.Shutdown(SocketShutdown.Both)
+        handler.Close()
+    with
+        :? Exception as ex -> printfn "%s" (ex.ToString())
+
+let reply (handler : Socket) (data : string) =
+    let byteData = Encoding.ASCII.GetBytes(data)
+
+    handler.BeginSend(byteData, 0, byteData.Length, SocketFlags.None,
+        new AsyncCallback(sendCallback), handler)
 
 let rec readCallback (result : IAsyncResult) =
-    let state = result.AsyncState :?> StateObject
-    let handler = state.WorkSocket
+    let clientSocket = result.AsyncState :?> StateObject
+    let handler = clientSocket.WorkSocket
 
-    let read = handler.EndReceive(result)
-    if read > 0 then
-        state.StringBuilder.Append(Encoding.ASCII.GetString(state.Buffer, 0, read))
-        handler.BeginReceive(state.Buffer, 0, state.BufferSize, SocketFlags.None, new AsyncCallback(readCallback), state)
+    let bufferSize = handler.EndReceive(result)
+    let packet = Array.zeroCreate bufferSize
+    Array.Copy(buffer, packet, packet.Length)
+
+    if bufferSize > 0 then
+        clientSocket.StringBuilder.Append(Encoding.ASCII.GetString(clientSocket.Buffer, 0, bufferSize))
+        handler.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
         ()
     else
-        if state.StringBuilder.Length > 1 then
-            let content = state.StringBuilder.ToString()
+        if clientSocket.StringBuilder.Length > 1 then
+            let content = clientSocket.StringBuilder.ToString()
             printfn "Read %i bytes from socket.\n Data : %s" content.Length content
         handler.Close()
 
-let rec setupSocket () =
-    serverSocket.Bind(new IPEndPoint(IPAddress.Any, 80))
-    serverSocket.Listen(10)
-    serverSocket.BeginAccept(new AsyncCallback(readCallback), serverSocket)
+let acceptCallback (result : IAsyncResult) =
+    let listener = result.AsyncState :?> Socket
+    let clientSocket = listener.EndAccept(result)
+    buffer = Array.zeroCreate 1024
+
+    let state = new StateObject()
+    state.WorkSocket = clientSocket
+    clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
+    ()
+
+let rec startListening() =
+    let listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
+    listener.Bind(new IPEndPoint(IPAddress.Any, 80))
+    listener.Listen(500)
+    listener.BeginAccept(new AsyncCallback(acceptCallback), listener)
+    
+    while true do Console.ReadLine()
+    
+    Console.WriteLine("Closing the listener...")
+
