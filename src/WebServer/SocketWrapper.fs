@@ -3,7 +3,6 @@ open System
 open System.Net
 open System.Net.Sockets
 open System.Text
-open System.IO
 open FileScraper
 
 type StateObject() =
@@ -33,16 +32,24 @@ let sendCallback (result : IAsyncResult) =
     with
         :? Exception as ex -> printfn "%s" (ex.ToString())
 
-let reply (handler : Socket) (data : string) =
-    let byteData = Encoding.ASCII.GetBytes(data)
+let reply (fileContents : string) =
+    let httpHeader = 
+    "HTTP/1.1 200 OK
+    Server: CustomWebServer 1.0
+    Content-Type: text/html; charset=utf-8
+    Accept-Ranges: none"
+    
+    let byteData = Encoding.UTF8.GetBytes(fileContents)
 
-    handler.BeginSend(byteData, 0, byteData.Length, SocketFlags.None,
-        new AsyncCallback(sendCallback), handler)
+    serverSocket.BeginSend(byteData, 0, byteData.Length, SocketFlags.None,
+        new AsyncCallback(sendCallback), serverSocket)
 
 let rec readCallback (result : IAsyncResult) =
     let clientSocket = result.AsyncState :?> Socket
 
-    let bufferSize = clientSocket.EndReceive(result)
+    let bufferSize, socketError = clientSocket.EndReceive(result)
+    if socketError <> SocketError.Success then printfn "SOCKET ERROR! Error: %s" (socketError.ToString())
+
     let packet = Array.zeroCreate bufferSize
     Array.Copy(buffer, packet, packet.Length)
 
@@ -51,11 +58,14 @@ let rec readCallback (result : IAsyncResult) =
     
     let resourcePath =
         if String.IsNullOrEmpty(httpRequest.ResourcePath) then
-            getResourcePath "/index.html"
+            getResourcePath "index.html"
         else
-            getResourcePath httpRequest.ResourcePath
-    let fileContents = getFileContents resourcePath
-    reply serverSocket fileContents
+            httpRequest.ResourcePath.Replace('/','\\')
+            |> getResourcePath
+
+    resourcePath
+    |> getFileContents
+    |> reply
 
     buffer = Array.zeroCreate 1024
     clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
@@ -65,8 +75,8 @@ let rec acceptCallback (result : IAsyncResult) =
     let clientSocket = serverSocket.EndAccept(result)
     buffer = Array.zeroCreate 1024
 
-    clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
     serverSocket.BeginAccept(new AsyncCallback(acceptCallback), null)
+    clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
     ()
 
 let rec startListening() =

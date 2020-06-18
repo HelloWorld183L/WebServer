@@ -1,12 +1,11 @@
 ﻿module FileScraper
 open System.IO
 
-let basePath = "C:\Users\david\source\repos\WebServer\src\WebServer\website"
+let websitePath = "C:\\Users\\Leon\\source\\repos\\WebServer\\src\\WebServer\\website\\"
 
-let getResourcePath resourceLocation =
-    Path.GetFullPath(resourceLocation, basePath)
+let getResourcePath relativePath =
+    websitePath + relativePath
 
 let getFileContents (absoluteFilePath : string) =
     use streamReader = new StreamReader(absoluteFilePath)
     streamReader.ReadToEnd()
-    
