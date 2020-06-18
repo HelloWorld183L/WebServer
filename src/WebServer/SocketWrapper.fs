@@ -3,6 +3,8 @@ open System
 open System.Net
 open System.Net.Sockets
 open System.Text
+open System.IO
+open FileScraper
 
 type StateObject() =
     member this.WorkSocket : Socket = null
@@ -10,7 +12,14 @@ type StateObject() =
     member this.Buffer : byte [] = Array.zeroCreate 1024
     member this.StringBuilder = new StringBuilder()
 
+type HttpRequest =
+    {
+        RequestMethod: string
+        ResourcePath: string
+    }
+
 let buffer : byte [] = Array.zeroCreate 1024
+let serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
 
 let sendCallback (result : IAsyncResult) =
     try
@@ -31,38 +40,39 @@ let reply (handler : Socket) (data : string) =
         new AsyncCallback(sendCallback), handler)
 
 let rec readCallback (result : IAsyncResult) =
-    let clientSocket = result.AsyncState :?> StateObject
-    let handler = clientSocket.WorkSocket
+    let clientSocket = result.AsyncState :?> Socket
 
-    let bufferSize = handler.EndReceive(result)
+    let bufferSize = clientSocket.EndReceive(result)
     let packet = Array.zeroCreate bufferSize
     Array.Copy(buffer, packet, packet.Length)
 
-    if bufferSize > 0 then
-        clientSocket.StringBuilder.Append(Encoding.ASCII.GetString(clientSocket.Buffer, 0, bufferSize))
-        handler.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
-        ()
-    else
-        if clientSocket.StringBuilder.Length > 1 then
-            let content = clientSocket.StringBuilder.ToString()
-            printfn "Read %i bytes from socket.\n Data : %s" content.Length content
-        handler.Close()
+    let packetInfo = Encoding.ASCII.GetString(packet)
+    let httpRequest = { RequestMethod=packetInfo.Substring(0, 3); ResourcePath=packetInfo.Substring(4, 11)}
+    
+    let resourcePath =
+        if String.IsNullOrEmpty(httpRequest.ResourcePath) then
+            getResourcePath "/index.html"
+        else
+            getResourcePath httpRequest.ResourcePath
+    let fileContents = getFileContents resourcePath
+    reply serverSocket fileContents
 
-let acceptCallback (result : IAsyncResult) =
-    let listener = result.AsyncState :?> Socket
-    let clientSocket = listener.EndAccept(result)
     buffer = Array.zeroCreate 1024
-
-    let state = new StateObject()
-    state.WorkSocket = clientSocket
     clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
     ()
 
+let rec acceptCallback (result : IAsyncResult) =
+    let clientSocket = serverSocket.EndAccept(result)
+    buffer = Array.zeroCreate 1024
+
+    clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
+    serverSocket.BeginAccept(new AsyncCallback(acceptCallback), null)
+    ()
+
 let rec startListening() =
-    let listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
-    listener.Bind(new IPEndPoint(IPAddress.Any, 80))
-    listener.Listen(500)
-    listener.BeginAccept(new AsyncCallback(acceptCallback), listener)
+    serverSocket.Bind(new IPEndPoint(IPAddress.Any, 80))
+    serverSocket.Listen(500)
+    serverSocket.BeginAccept(new AsyncCallback(acceptCallback), serverSocket)
     
     while true do Console.ReadLine()
     

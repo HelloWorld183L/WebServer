@@ -6,13 +6,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="FileScraper.fs" />
     <None Include="website\script.js" />
     <Content Include="website\main.css" />
     <Content Include="website\helloworld.html" />
     <Compile Include="SocketWrapper.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
-
-  <ItemGroup />
 
 </Project>
