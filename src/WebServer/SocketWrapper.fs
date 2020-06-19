@@ -4,17 +4,12 @@ open System.Net
 open System.Net.Sockets
 open System.Text
 open FileScraper
+open MimeTypes
 
-type StateObject() =
-    member this.WorkSocket : Socket = null
-    member this.BufferSize = 1024
-    member this.Buffer : byte [] = Array.zeroCreate 1024
-    member this.StringBuilder = new StringBuilder()
-
-type HttpRequest =
+type HttpRequestInfo =
     {
         RequestMethod: string
-        ResourcePath: string
+        ResourceName: string
     }
 
 let buffer : byte [] = Array.zeroCreate 1024
@@ -22,25 +17,33 @@ let serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, Pro
 
 let socketIsConnected (socket : Socket) =
     if socket.Connected <> true then
-        printfn "Server socket is NOT connected."
+        printfn "Socket is NOT connected."
     socket.Connected
 
 let sendCallback (result : IAsyncResult) =
-    let handler = result.AsyncState :?> Socket
+    let clientSocket = result.AsyncState :?> Socket
 
-    let bytesSent = handler.EndSend(result)
+    let bytesSent = clientSocket.EndSend(result)
     printfn "Sent %i bytes to client" bytesSent
 
-let reply (fileContents : string) (clientSocket : Socket) =
-    let crlf = "\r\n"
+    clientSocket.Dispose()
 
+let reply httpRequestInfo (clientSocket : Socket) =
+    let fileInfo = getFileInfo httpRequestInfo.ResourceName
+
+    let crlf = "\r\n"
+    let contentType = getMimeType fileInfo
     let httpHeaders = 
         "HTTP/1.1 200 OK" + crlf +
         "Server: CustomWebServer 1.0" + crlf +
-        "Content-Type: text/html; charset=utf-8" + crlf +
+        "Content-Type:" + contentType + "; charset=utf-8" + crlf +
         "Accept-Ranges: none" + crlf
+    
+    let fileContents =
+        getResourcePath httpRequestInfo.ResourceName
+        |> getFileContents
     let byteData =
-        httpHeaders + fileContents
+        httpHeaders + crlf + crlf + fileContents + crlf + crlf
         |> Encoding.UTF8.GetBytes
 
     clientSocket.BeginSend(byteData, 0, byteData.Length, SocketFlags.None,
@@ -63,32 +66,24 @@ let rec readCallback (result : IAsyncResult) =
 
     let packet = Array.zeroCreate bufferSize
     Array.Copy(buffer, packet, packet.Length)
-
-    let packetInfo = Encoding.ASCII.GetString(packet)
-    let httpRequest = { RequestMethod=packetInfo.Substring(0, 3); ResourcePath=packetInfo.Substring(4, 11)}
-    
-    let resourcePath =
-        if String.IsNullOrEmpty(httpRequest.ResourcePath) then
-            getResourcePath "index.html"
-        else
-            httpRequest.ResourcePath.Replace('/','\\')
-            |> getResourcePath
-
-    let fileContents = getFileContents resourcePath
-    reply fileContents clientSocket
-
     handlePacket packet
 
-    let newBuffer = Array.zeroCreate 1024
-    clientSocket.BeginReceive(newBuffer, 0, buffer.Length, SocketFlags.None,
-    new AsyncCallback(readCallback), clientSocket)
-    ()
+    let packetInfo = Encoding.ASCII.GetString(packet)
+    let httpRequest = { RequestMethod=packetInfo.Substring(0, 3); ResourceName=packetInfo.Substring(4, 11)}
+
+    reply httpRequest clientSocket
+
+    if socketIsConnected clientSocket then
+        buffer = Array.zeroCreate 1024
+        clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None,
+        new AsyncCallback(readCallback), clientSocket)
+        ()
 
 let rec acceptCallback (result : IAsyncResult) =
     let clientSocket = serverSocket.EndAccept(result)
     buffer = Array.zeroCreate 1024
 
-    serverSocket.BeginAccept(new AsyncCallback(acceptCallback), null)
+    serverSocket.BeginAccept(new AsyncCallback(acceptCallback), serverSocket)
     clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
     ()
 
