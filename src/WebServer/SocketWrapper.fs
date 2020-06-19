@@ -20,29 +20,40 @@ type HttpRequest =
 let buffer : byte [] = Array.zeroCreate 1024
 let serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
 
+let socketIsConnected (socket : Socket) =
+    if socket.Connected <> true then
+        printfn "Server socket is NOT connected."
+    socket.Connected
+
 let sendCallback (result : IAsyncResult) =
-    try
-        let handler = result.AsyncState :?> Socket
+    let handler = result.AsyncState :?> Socket
 
-        let bytesSent = handler.EndSend(result)
-        printfn "Sent %i bytes to client" bytesSent
+    let bytesSent = handler.EndSend(result)
+    printfn "Sent %i bytes to client" bytesSent
 
-        handler.Shutdown(SocketShutdown.Both)
-        handler.Close()
-    with
-        :? Exception as ex -> printfn "%s" (ex.ToString())
+let reply (fileContents : string) (clientSocket : Socket) =
+    let crlf = "\r\n"
 
-let reply (fileContents : string) =
-    let httpHeader = 
-    "HTTP/1.1 200 OK
-    Server: CustomWebServer 1.0
-    Content-Type: text/html; charset=utf-8
-    Accept-Ranges: none"
-    
-    let byteData = Encoding.UTF8.GetBytes(fileContents)
+    let httpHeaders = 
+        "HTTP/1.1 200 OK" + crlf +
+        "Server: CustomWebServer 1.0" + crlf +
+        "Content-Type: text/html; charset=utf-8" + crlf +
+        "Accept-Ranges: none" + crlf
+    let byteData =
+        httpHeaders + fileContents
+        |> Encoding.UTF8.GetBytes
 
-    serverSocket.BeginSend(byteData, 0, byteData.Length, SocketFlags.None,
-        new AsyncCallback(sendCallback), serverSocket)
+    clientSocket.BeginSend(byteData, 0, byteData.Length, SocketFlags.None,
+        new AsyncCallback(sendCallback), clientSocket)
+
+let handlePacket packet =
+    let convertToUInt16 packet index = BitConverter.ToUInt16(packet, index)
+
+    let getPacketDetail = convertToUInt16 packet
+    let packetLength = getPacketDetail 0
+    let packetType = getPacketDetail 2
+
+    printfn "Received packet! Length: %i | Type: %i" packetLength packetType
 
 let rec readCallback (result : IAsyncResult) =
     let clientSocket = result.AsyncState :?> Socket
@@ -63,12 +74,14 @@ let rec readCallback (result : IAsyncResult) =
             httpRequest.ResourcePath.Replace('/','\\')
             |> getResourcePath
 
-    resourcePath
-    |> getFileContents
-    |> reply
+    let fileContents = getFileContents resourcePath
+    reply fileContents clientSocket
 
-    buffer = Array.zeroCreate 1024
-    clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
+    handlePacket packet
+
+    let newBuffer = Array.zeroCreate 1024
+    clientSocket.BeginReceive(newBuffer, 0, buffer.Length, SocketFlags.None,
+    new AsyncCallback(readCallback), clientSocket)
     ()
 
 let rec acceptCallback (result : IAsyncResult) =
@@ -87,4 +100,3 @@ let rec startListening() =
     while true do Console.ReadLine()
     
     Console.WriteLine("Closing the listener...")
-
