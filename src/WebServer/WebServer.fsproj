@@ -6,10 +6,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="MimeTypes.fs" />
     <Compile Include="FileScraper.fs" />
+    <Content Include="website\favicon.ico" />
+    <Content Include="website\index.html" />
     <None Include="website\script.js" />
     <Content Include="website\main.css" />
-    <Content Include="website\helloworld.html" />
     <Compile Include="SocketWrapper.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
