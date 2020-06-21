@@ -12,101 +12,86 @@ type HttpRequestInfo =
         ResourceName: string
     }
 
-type SocketStateObject =
+type Client =
     {
         Socket: Socket
-        mutable IsDead: bool
+        SendBuffer: byte[]
+        ReceiveBuffer: byte[]
     }
 
-let buffer : byte [] = Array.zeroCreate 1024
+let defaultBufferSize = 10240
 let serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
-let serverSocketState = { Socket=serverSocket; IsDead=false}
 let crlf = "\r\n"
 
-let socketIsConnected (clientSocketState : SocketStateObject) =
-    if clientSocketState.Socket.Connected = false then
-        printfn "Client socket is NOT connected."
-        clientSocketState.IsDead <- true
-    clientSocketState.Socket.Connected
-
 let sendCallback (result : IAsyncResult) =
-    let clientSocket = result.AsyncState :?> SocketStateObject
+    let clientSocketState = result.AsyncState :?> Client
     try
-        let bytesSent = clientSocket.Socket.EndSend(result)
+        let bytesSent = clientSocketState.Socket.EndSend(result)
         printfn "Sent %i bytes to client" bytesSent
     with :? Exception as ex -> 
         printfn "%s" ex.Message
     
-    clientSocket.IsDead <- true
-    clientSocket.Socket.Dispose()
+    clientSocketState.SendBuffer = Array.zeroCreate 0
+    clientSocketState.ReceiveBuffer = Array.zeroCreate 0
+    clientSocketState.Socket.Dispose()
 
-let setUpHttpHeaders contentType =
+let setUpHttpHeaders (contentLength : int) contentType =
     "HTTP/1.1 200 OK" + crlf +
     "Server: CustomWebServer 1.0" + crlf +
     "Content-Type:" + contentType + "; charset=utf-8" + crlf +
-    "Accept-Ranges: none" + crlf
+    "Accept-Ranges: none" + crlf +
+    "Content-Length: " + (contentLength.ToString())
 
-let getHttpMessage resourceName fileContents =
+let getHttpMessage resourceName (fileContents : string) =
     let httpHeaders =
         getFileInfo resourceName
         |> getMimeType
-        |> setUpHttpHeaders
+        |> setUpHttpHeaders fileContents.Length
     httpHeaders + crlf + crlf + fileContents + crlf + crlf
 
-let reply (clientSocket : SocketStateObject) httpRequestInfo =
+let reply (clientSocket : Client) resourceName =
     let byteData =
-        httpRequestInfo.ResourceName
+        resourceName
         |> getResourcePath
         |> getFileContents
-        |> getHttpMessage httpRequestInfo.ResourceName
+        |> getHttpMessage resourceName
         |> Encoding.UTF8.GetBytes 
     
     clientSocket.Socket.BeginSend(byteData, 0, byteData.Length, SocketFlags.None,
-        new AsyncCallback(sendCallback), clientSocket)
-
-let handlePacket packet =
-    let convertToUInt16 index = BitConverter.ToUInt16(packet, index)
-
-    let packetLength = convertToUInt16 0
-    let packetType = convertToUInt16 2
-
-    printfn "Received packet! Length: %i | Type: %i" packetLength packetType
+                                  new AsyncCallback(sendCallback), clientSocket)
 
 let rec readCallback (result : IAsyncResult) =
-    let clientSocketState = result.AsyncState :?> SocketStateObject
+    let clientSocketState = result.AsyncState :?> Client
     let clientSocket = clientSocketState.Socket
     
     let bufferSize, socketError = clientSocket.EndReceive(result)
-    clientSocketState.IsDead <- socketIsConnected clientSocketState
-    if clientSocketState.IsDead = false then
+    if bufferSize <> 0 && socketError = SocketError.Success = false then
         if socketError <> SocketError.Success then 
             printfn "CLIENT SOCKET ERROR! Error: %s" (socketError.ToString())
-            clientSocketState.IsDead <- true
 
         let packet = Array.zeroCreate bufferSize
-        Array.Copy(buffer, packet, packet.Length)
-        handlePacket packet
+        Array.Copy(clientSocketState.Buffer, packet, bufferSize)
 
-        let packetInfo = Encoding.ASCII.GetString(packet)
-        { RequestMethod=packetInfo.Substring(0, 3); ResourceName=packetInfo.Substring(4, 11)}
+        let packetInfo = Encoding.UTF8.GetString(packet)
+        let httpRequestInfo = { RequestMethod=packetInfo.Substring(0, 3); 
+                                ResourceName=packetInfo.Substring(4, 11)}
+        httpRequestInfo.ResourceName
         |> reply clientSocketState
 
-        clientSocketState.IsDead <- socketIsConnected clientSocketState
-        if clientSocketState.IsDead = false then
-            buffer = Array.zeroCreate 1024
-            clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None,
+        if socketError = SocketError.Success then
+            clientSocketState.Buffer = Array.zeroCreate 10240
+            clientSocket.BeginReceive(clientSocketState.Buffer, 0, clientSocketState.Buffer.Length, SocketFlags.None,
             new AsyncCallback(readCallback), clientSocketState)
+            clientSocketState.Socket.Dispose()
             ()
 
 let rec acceptCallback (result : IAsyncResult) =
     let clientSocket = serverSocket.EndAccept(result)
-    let clientSocketState = {Socket=clientSocket; IsDead=false}
+    let clientSocketState = {Socket=clientSocket; ReceiveBuffer=Array.zeroCreate defaultBufferSize; SendBuffer=null}
 
-    buffer = Array.zeroCreate 1024
-
-    serverSocket.BeginAccept(new AsyncCallback(acceptCallback), serverSocketState)
-    clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback),
-                                clientSocketState)
+    clientSocket.BeginReceive(clientSocketState.ReceiveBuffer, 0, clientSocketState.ReceiveBuffer.Length, SocketFlags.None, new AsyncCallback(readCallback),
+                              clientSocketState)
+    serverSocket.BeginAccept(new AsyncCallback(acceptCallback), null)
     ()
 
 let rec startListening() =
