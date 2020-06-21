@@ -12,85 +12,107 @@ type HttpRequestInfo =
         ResourceName: string
     }
 
+type SocketStateObject =
+    {
+        Socket: Socket
+        mutable IsDead: bool
+    }
+
 let buffer : byte [] = Array.zeroCreate 1024
 let serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
+let serverSocketState = { Socket=serverSocket; IsDead=false}
+let crlf = "\r\n"
 
-let socketIsConnected (socket : Socket) =
-    if socket.Connected <> true then
-        printfn "Socket is NOT connected."
-    socket.Connected
+let socketIsConnected (clientSocketState : SocketStateObject) =
+    if clientSocketState.Socket.Connected = false then
+        printfn "Client socket is NOT connected."
+        clientSocketState.IsDead <- true
+    clientSocketState.Socket.Connected
 
 let sendCallback (result : IAsyncResult) =
-    let clientSocket = result.AsyncState :?> Socket
-
-    let bytesSent = clientSocket.EndSend(result)
-    printfn "Sent %i bytes to client" bytesSent
-
-    clientSocket.Dispose()
-
-let reply httpRequestInfo (clientSocket : Socket) =
-    let fileInfo = getFileInfo httpRequestInfo.ResourceName
-
-    let crlf = "\r\n"
-    let contentType = getMimeType fileInfo
-    let httpHeaders = 
-        "HTTP/1.1 200 OK" + crlf +
-        "Server: CustomWebServer 1.0" + crlf +
-        "Content-Type:" + contentType + "; charset=utf-8" + crlf +
-        "Accept-Ranges: none" + crlf
+    let clientSocket = result.AsyncState :?> SocketStateObject
+    try
+        let bytesSent = clientSocket.Socket.EndSend(result)
+        printfn "Sent %i bytes to client" bytesSent
+    with :? Exception as ex -> 
+        printfn "%s" ex.Message
     
-    let fileContents =
-        getResourcePath httpRequestInfo.ResourceName
-        |> getFileContents
-    let byteData =
-        httpHeaders + crlf + crlf + fileContents + crlf + crlf
-        |> Encoding.UTF8.GetBytes
+    clientSocket.IsDead <- true
+    clientSocket.Socket.Dispose()
 
-    clientSocket.BeginSend(byteData, 0, byteData.Length, SocketFlags.None,
+let setUpHttpHeaders contentType =
+    "HTTP/1.1 200 OK" + crlf +
+    "Server: CustomWebServer 1.0" + crlf +
+    "Content-Type:" + contentType + "; charset=utf-8" + crlf +
+    "Accept-Ranges: none" + crlf
+
+let getHttpMessage resourceName fileContents =
+    let httpHeaders =
+        getFileInfo resourceName
+        |> getMimeType
+        |> setUpHttpHeaders
+    httpHeaders + crlf + crlf + fileContents + crlf + crlf
+
+let reply (clientSocket : SocketStateObject) httpRequestInfo =
+    let byteData =
+        httpRequestInfo.ResourceName
+        |> getResourcePath
+        |> getFileContents
+        |> getHttpMessage httpRequestInfo.ResourceName
+        |> Encoding.UTF8.GetBytes 
+    
+    clientSocket.Socket.BeginSend(byteData, 0, byteData.Length, SocketFlags.None,
         new AsyncCallback(sendCallback), clientSocket)
 
 let handlePacket packet =
-    let convertToUInt16 packet index = BitConverter.ToUInt16(packet, index)
+    let convertToUInt16 index = BitConverter.ToUInt16(packet, index)
 
-    let getPacketDetail = convertToUInt16 packet
-    let packetLength = getPacketDetail 0
-    let packetType = getPacketDetail 2
+    let packetLength = convertToUInt16 0
+    let packetType = convertToUInt16 2
 
     printfn "Received packet! Length: %i | Type: %i" packetLength packetType
 
 let rec readCallback (result : IAsyncResult) =
-    let clientSocket = result.AsyncState :?> Socket
-
+    let clientSocketState = result.AsyncState :?> SocketStateObject
+    let clientSocket = clientSocketState.Socket
+    
     let bufferSize, socketError = clientSocket.EndReceive(result)
-    if socketError <> SocketError.Success then printfn "SOCKET ERROR! Error: %s" (socketError.ToString())
+    clientSocketState.IsDead <- socketIsConnected clientSocketState
+    if clientSocketState.IsDead = false then
+        if socketError <> SocketError.Success then 
+            printfn "CLIENT SOCKET ERROR! Error: %s" (socketError.ToString())
+            clientSocketState.IsDead <- true
 
-    let packet = Array.zeroCreate bufferSize
-    Array.Copy(buffer, packet, packet.Length)
-    handlePacket packet
+        let packet = Array.zeroCreate bufferSize
+        Array.Copy(buffer, packet, packet.Length)
+        handlePacket packet
 
-    let packetInfo = Encoding.ASCII.GetString(packet)
-    let httpRequest = { RequestMethod=packetInfo.Substring(0, 3); ResourceName=packetInfo.Substring(4, 11)}
+        let packetInfo = Encoding.ASCII.GetString(packet)
+        { RequestMethod=packetInfo.Substring(0, 3); ResourceName=packetInfo.Substring(4, 11)}
+        |> reply clientSocketState
 
-    reply httpRequest clientSocket
-
-    if socketIsConnected clientSocket then
-        buffer = Array.zeroCreate 1024
-        clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None,
-        new AsyncCallback(readCallback), clientSocket)
-        ()
+        clientSocketState.IsDead <- socketIsConnected clientSocketState
+        if clientSocketState.IsDead = false then
+            buffer = Array.zeroCreate 1024
+            clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None,
+            new AsyncCallback(readCallback), clientSocketState)
+            ()
 
 let rec acceptCallback (result : IAsyncResult) =
     let clientSocket = serverSocket.EndAccept(result)
+    let clientSocketState = {Socket=clientSocket; IsDead=false}
+
     buffer = Array.zeroCreate 1024
 
-    serverSocket.BeginAccept(new AsyncCallback(acceptCallback), serverSocket)
-    clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocket)
+    serverSocket.BeginAccept(new AsyncCallback(acceptCallback), serverSocketState)
+    clientSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback(readCallback),
+                                clientSocketState)
     ()
 
 let rec startListening() =
     serverSocket.Bind(new IPEndPoint(IPAddress.Any, 80))
     serverSocket.Listen(500)
-    serverSocket.BeginAccept(new AsyncCallback(acceptCallback), serverSocket)
+    serverSocket.BeginAccept(new AsyncCallback(acceptCallback), null)
     
     while true do Console.ReadLine()
     
