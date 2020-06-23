@@ -8,8 +8,7 @@ let getFileInfo relativePath =
     new FileInfo(websitePath + relativePath)
 
 let getFileContents (absoluteFilePath : string) =
-    use streamReader = new StreamReader(absoluteFilePath)
-    streamReader.ReadToEnd()
+    File.ReadAllBytes(absoluteFilePath)
 
 let getResourcePath resourceName =
     if String.IsNullOrEmpty(resourceName) then
