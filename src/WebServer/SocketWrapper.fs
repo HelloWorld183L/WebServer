@@ -15,8 +15,8 @@ type HttpRequestInfo =
 type Client =
     {
         Socket: Socket
-        SendBuffer: byte[]
-        ReceiveBuffer: byte[]
+        mutable SendBuffer: byte[]
+        mutable ReceiveBuffer: byte[]
     }
 
 let defaultBufferSize = 10240
@@ -30,10 +30,6 @@ let sendCallback (result : IAsyncResult) =
         printfn "Sent %i bytes to client" bytesSent
     with :? Exception as ex -> 
         printfn "%s" ex.Message
-    
-    clientSocketState.SendBuffer = Array.zeroCreate 0
-    clientSocketState.ReceiveBuffer = Array.zeroCreate 0
-    clientSocketState.Socket.Dispose()
 
 let setUpHttpHeaders (contentLength : int) contentType =
     "HTTP/1.1 200 OK" + crlf +
@@ -42,52 +38,70 @@ let setUpHttpHeaders (contentLength : int) contentType =
     "Accept-Ranges: none" + crlf +
     "Content-Length: " + (contentLength.ToString())
 
-let getHttpMessage resourceName (fileContents : string) =
+let getHttpHeaders resourceName contentLength =
     let httpHeaders =
         getFileInfo resourceName
         |> getMimeType
-        |> setUpHttpHeaders fileContents.Length
-    httpHeaders + crlf + crlf + fileContents + crlf + crlf
+        |> setUpHttpHeaders contentLength
+    httpHeaders + crlf + crlf
 
 let reply (clientSocket : Client) resourceName =
-    let byteData =
+    let extraSpace =
+        crlf + crlf
+        |> Encoding.UTF8.GetBytes
+
+    let contentByteData =
         resourceName
         |> getResourcePath
         |> getFileContents
-        |> getHttpMessage resourceName
+    Array.Copy(extraSpace, contentByteData, extraSpace.Length)
+
+    let headerByteData =
+        contentByteData.Length
+        |> getHttpHeaders resourceName
         |> Encoding.UTF8.GetBytes 
     
-    clientSocket.Socket.BeginSend(byteData, 0, byteData.Length, SocketFlags.None,
+    let combinedLength = (contentByteData.Length + headerByteData.Length)
+    let byteData = Array.zeroCreate combinedLength
+    Array.Copy(headerByteData, byteData, headerByteData.Length)
+    Array.Copy(contentByteData, byteData, contentByteData.Length)
+
+    clientSocket.SendBuffer <- byteData
+    clientSocket.Socket.BeginSend(clientSocket.SendBuffer, 0, clientSocket.SendBuffer.Length, SocketFlags.None,
                                   new AsyncCallback(sendCallback), clientSocket)
+
+let parsePacketInfo (httpRequest : string) =
+    let requestParts = httpRequest.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+    let httpRequestInfo = { RequestMethod = requestParts.[0]; ResourceName = requestParts.[1] }
+    httpRequestInfo
 
 let rec readCallback (result : IAsyncResult) =
     let clientSocketState = result.AsyncState :?> Client
     let clientSocket = clientSocketState.Socket
     
     let bufferSize, socketError = clientSocket.EndReceive(result)
-    if bufferSize <> 0 && socketError = SocketError.Success = false then
+    if bufferSize <> 0 && socketError = SocketError.Success then
         if socketError <> SocketError.Success then 
             printfn "CLIENT SOCKET ERROR! Error: %s" (socketError.ToString())
 
         let packet = Array.zeroCreate bufferSize
-        Array.Copy(clientSocketState.Buffer, packet, bufferSize)
+        Array.Copy(clientSocketState.ReceiveBuffer, packet, bufferSize)
 
-        let packetInfo = Encoding.UTF8.GetString(packet)
-        let httpRequestInfo = { RequestMethod=packetInfo.Substring(0, 3); 
-                                ResourceName=packetInfo.Substring(4, 11)}
+        let httpRequestInfo =
+            Encoding.UTF8.GetString packet
+            |> parsePacketInfo
+
         httpRequestInfo.ResourceName
         |> reply clientSocketState
 
-        if socketError = SocketError.Success then
-            clientSocketState.Buffer = Array.zeroCreate 10240
-            clientSocket.BeginReceive(clientSocketState.Buffer, 0, clientSocketState.Buffer.Length, SocketFlags.None,
-            new AsyncCallback(readCallback), clientSocketState)
-            clientSocketState.Socket.Dispose()
-            ()
+        clientSocketState.SendBuffer <- Array.zeroCreate 0
+        clientSocketState.ReceiveBuffer <- Array.zeroCreate 0
+        clientSocketState.Socket.Dispose()
+        ()
 
 let rec acceptCallback (result : IAsyncResult) =
     let clientSocket = serverSocket.EndAccept(result)
-    let clientSocketState = {Socket=clientSocket; ReceiveBuffer=Array.zeroCreate defaultBufferSize; SendBuffer=null}
+    let clientSocketState = {Socket=clientSocket; ReceiveBuffer=Array.zeroCreate defaultBufferSize; SendBuffer=Array.zeroCreate 30000}
 
     clientSocket.BeginReceive(clientSocketState.ReceiveBuffer, 0, clientSocketState.ReceiveBuffer.Length, SocketFlags.None, new AsyncCallback(readCallback),
                               clientSocketState)
