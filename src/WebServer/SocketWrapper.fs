@@ -26,17 +26,16 @@ let crlf = "\r\n"
 let sendCallback (result : IAsyncResult) =
     let clientSocketState = result.AsyncState :?> Client
     try
-        let bytesSent = clientSocketState.Socket.EndSend(result)
-        printfn "Sent %i bytes to client" bytesSent
+        clientSocketState.Socket.EndSend(result)
+        |> printfn "Sent %i bytes to client"
     with :? Exception as ex -> 
         printfn "%s" ex.Message
 
 let setUpHttpHeaders (contentLength : int) contentType =
     "HTTP/1.1 200 OK" + crlf +
     "Server: CustomWebServer 1.0" + crlf +
-    "Content-Type:" + contentType + "; charset=utf-8" + crlf +
-    "Accept-Ranges: none" + crlf +
-    "Content-Length: " + (contentLength.ToString())
+    "Content-Type: " + contentType + "; charset=utf-8" + crlf +
+    "Accept-Ranges: none"
 
 let getHttpHeaders resourceName contentLength =
     let httpHeaders =
@@ -54,17 +53,22 @@ let reply (clientSocket : Client) resourceName =
         resourceName
         |> getResourcePath
         |> getFileContents
-    Array.Copy(extraSpace, contentByteData, extraSpace.Length)
+    
+    let length = (contentByteData.Length + extraSpace.Length)
+    let contentByteDataWithSpace = Array.zeroCreate length : byte[]
+    Array.Copy(contentByteData, contentByteData.GetLowerBound(0), contentByteDataWithSpace, contentByteData.GetUpperBound(0) - 1, contentByteData.Length)
+    Array.Copy(extraSpace, extraSpace.GetLowerBound(0), contentByteDataWithSpace, contentByteDataWithSpace.GetUpperBound(0) - 1, extraSpace.Length)
 
     let headerByteData =
         contentByteData.Length
         |> getHttpHeaders resourceName
         |> Encoding.UTF8.GetBytes 
-    
+    Array.Copy(extraSpace, 0, headerByteData, headerByteData.Length - 1, extraSpace.Length)
+
     let combinedLength = (contentByteData.Length + headerByteData.Length)
     let byteData = Array.zeroCreate combinedLength
-    Array.Copy(headerByteData, byteData, headerByteData.Length)
-    Array.Copy(contentByteData, byteData, contentByteData.Length)
+    Array.Copy(headerByteData, 0, byteData, byteData.Length - 1, headerByteData.Length)
+    Array.Copy(contentByteData, 0, byteData, byteData.Length - 1, contentByteData.Length)
 
     clientSocket.SendBuffer <- byteData
     clientSocket.Socket.BeginSend(clientSocket.SendBuffer, 0, clientSocket.SendBuffer.Length, SocketFlags.None,
@@ -103,8 +107,7 @@ let rec acceptCallback (result : IAsyncResult) =
     let clientSocket = serverSocket.EndAccept(result)
     let clientSocketState = {Socket=clientSocket; ReceiveBuffer=Array.zeroCreate defaultBufferSize; SendBuffer=Array.zeroCreate 30000}
 
-    clientSocket.BeginReceive(clientSocketState.ReceiveBuffer, 0, clientSocketState.ReceiveBuffer.Length, SocketFlags.None, new AsyncCallback(readCallback),
-                              clientSocketState)
+    clientSocket.BeginReceive(clientSocketState.ReceiveBuffer, 0, clientSocketState.ReceiveBuffer.Length, SocketFlags.None, new AsyncCallback(readCallback), clientSocketState)
     serverSocket.BeginAccept(new AsyncCallback(acceptCallback), null)
     ()
 
