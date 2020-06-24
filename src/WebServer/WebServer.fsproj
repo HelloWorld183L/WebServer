@@ -6,9 +6,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="FileScraper.fs" />
     <Compile Include="Networking\MimeTypes.fs" />
     <Compile Include="Networking\SocketWrapper.fs" />
-    <Compile Include="FileScraper.fs" />
     <Content Include="website\favicon.ico" />
     <Content Include="website\index.html" />
     <None Include="website\script.js" />
