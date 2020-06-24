@@ -1,2 +1,2 @@
 # WebServer
-Simple, C# web server made for fun
+Simple, F# web server made for fun
