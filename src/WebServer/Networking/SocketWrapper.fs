@@ -5,19 +5,7 @@ open System.Net.Sockets
 open System.Text
 open FileScraper
 open MimeTypes
-
-type HttpRequestInfo =
-    {
-        RequestMethod: string
-        ResourceName: string
-    }
-
-type Client =
-    {
-        Socket: Socket
-        mutable SendBuffer: byte[]
-        mutable ReceiveBuffer: byte[]
-    }
+open NetworkingTypes
 
 let defaultBufferSize = 10240
 let serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
@@ -31,17 +19,17 @@ let sendCallback (result : IAsyncResult) =
     with :? Exception as ex -> 
         printfn "%s" ex.Message
 
-let setUpHttpHeaders (contentLength : int) contentType =
+let setUpHttpHeaders contentType =
     "HTTP/1.1 200 OK" + crlf +
     "Server: CustomWebServer 1.0" + crlf +
     "Content-Type: " + contentType + "; charset=utf-8" + crlf +
     "Accept-Ranges: none"
 
-let getHttpHeaders resourceName contentLength =
+let getHttpHeaders resourceName =
     let httpHeaders =
         getFileInfo resourceName
         |> getMimeType
-        |> setUpHttpHeaders contentLength
+        |> setUpHttpHeaders
     httpHeaders + crlf + crlf
 
 let reply (clientSocket : Client) resourceName =
@@ -60,8 +48,8 @@ let reply (clientSocket : Client) resourceName =
     extraSpace.CopyTo(contentByteDataWithSpace, contentByteData.Length - 1)
 
     let headerByteData =
-        contentByteData.Length
-        |> getHttpHeaders resourceName
+        resourceName
+        |> getHttpHeaders
         |> Encoding.UTF8.GetBytes
     let headerLength = (headerByteData.Length + extraSpace.Length)
     let headerByteDataWithSpace = Array.zeroCreate headerLength : byte[]
