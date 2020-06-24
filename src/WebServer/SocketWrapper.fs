@@ -54,20 +54,24 @@ let reply (clientSocket : Client) resourceName =
         |> getResourcePath
         |> getFileContents
     
-    let length = (contentByteData.Length + extraSpace.Length)
-    let contentByteDataWithSpace = Array.zeroCreate length : byte[]
+    let contentLength = (contentByteData.Length + extraSpace.Length)
+    let contentByteDataWithSpace = Array.zeroCreate contentLength : byte[]
     contentByteData.CopyTo(contentByteDataWithSpace, 0)
-    extraSpace.CopyTo(contentByteDataWithSpace, 0)
+    extraSpace.CopyTo(contentByteDataWithSpace, contentByteData.Length - 1)
 
     let headerByteData =
         contentByteData.Length
         |> getHttpHeaders resourceName
         |> Encoding.UTF8.GetBytes
-    extraSpace.CopyTo(headerByteData, headerByteData.Length - 1)
+    let headerLength = (headerByteData.Length + extraSpace.Length)
+    let headerByteDataWithSpace = Array.zeroCreate headerLength : byte[]
+    headerByteData.CopyTo(headerByteDataWithSpace, 0)
+    extraSpace.CopyTo(headerByteDataWithSpace, headerByteData.Length - 1)
 
-    let byteData = Array.zeroCreate (headerByteData.Length + contentByteData.Length)
-    headerByteData.CopyTo(byteData, 0)
-    contentByteData.CopyTo(byteData, byteData.Length - 1)
+    let combinedLength = (contentByteDataWithSpace.Length + headerByteDataWithSpace.Length)
+    let byteData = Array.zeroCreate combinedLength
+    contentByteDataWithSpace.CopyTo(byteData, 0)
+    headerByteDataWithSpace.CopyTo(byteData, contentByteData.Length - 1)
 
     clientSocket.SendBuffer <- byteData
     clientSocket.Socket.BeginSend(clientSocket.SendBuffer, 0, clientSocket.SendBuffer.Length, SocketFlags.None,
