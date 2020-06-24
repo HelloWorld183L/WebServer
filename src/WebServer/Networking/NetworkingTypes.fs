@@ -11,6 +11,5 @@ type HttpRequestInfo =
 type Client =
     {
         Socket: Socket
-        mutable SendBuffer: byte[]
         mutable ReceiveBuffer: byte[]
     }

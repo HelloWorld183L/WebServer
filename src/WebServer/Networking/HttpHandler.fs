@@ -14,7 +14,6 @@ let setUpHttpHeaders contentType =
     "Content-Type: " + contentType + "; charset=utf-8" + crlf +
     "Accept-Ranges: none"
     
-
 let parseHttpRequest (httpRequest : string) =
     let requestParts = httpRequest.Split(' ', StringSplitOptions.RemoveEmptyEntries)
     let httpRequestInfo = { RequestMethod = requestParts.[0]; ResourceName = requestParts.[1] }

@@ -1,8 +1,13 @@
 ﻿module SocketHandler
 
 open NetworkingTypes
+open System.Net.Sockets
 
 let disconnect socketState =
-    socketState.SendBuffer <- Array.zeroCreate 0
-    socketState.ReceiveBuffer <- Array.zeroCreate 0
     socketState.Socket.Dispose()
+
+let handleSocketError (clientSocket : Client) (socketError : SocketError) =
+    printfn "Socket error! Message: %s" (socketError.ToString())
+
+    clientSocket.ReceiveBuffer <- Array.zeroCreate 1024
+    clientSocket.Socket.Dispose()
