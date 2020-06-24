@@ -9,6 +9,8 @@
     <Compile Include="FileScraper.fs" />
     <Compile Include="Networking\NetworkingTypes.fs" />
     <Compile Include="Networking\MimeTypes.fs" />
+    <Compile Include="Networking\HttpHandler.fs" />
+    <Compile Include="Networking\SocketHandler.fs" />
     <Compile Include="Networking\SocketWrapper.fs" />
     <Content Include="website\favicon.ico" />
     <Content Include="website\index.html" />
