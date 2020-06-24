@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Networking\MimeTypes.fs" />
+    <Compile Include="Networking\SocketWrapper.fs" />
+    <Compile Include="FileScraper.fs" />
+    <Content Include="website\favicon.ico" />
+    <Content Include="website\index.html" />
+    <None Include="website\script.js" />
+    <Content Include="website\main.css" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+</Project>
