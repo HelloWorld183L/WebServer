@@ -26,31 +26,30 @@ let getHttpHeaders resourceName =
         |> setUpHttpHeaders
     httpHeaders + crlf + crlf
 
-let assembleSendBuffer resourceName =
+let addExtraSpace (byteArray : byte[]) =
     let extraSpace =
         crlf + crlf
         |> Encoding.UTF8.GetBytes
+    let arrayWithSpace = Array.zeroCreate (byteArray.Length + extraSpace.Length) : byte[]
+    byteArray.CopyTo(arrayWithSpace, 0)
+    extraSpace.CopyTo(arrayWithSpace, byteArray.Length - 1)
+    arrayWithSpace
 
+let assembleSendBuffer resourceName =
     let contentByteData =
         resourceName
         |> getResourcePath
         |> getFileContents
-    let contentLength = (contentByteData.Length + extraSpace.Length)
-    let contentByteDataWithSpace = Array.zeroCreate contentLength : byte[]
-    contentByteData.CopyTo(contentByteDataWithSpace, 0)
-    extraSpace.CopyTo(contentByteDataWithSpace, contentByteData.Length - 1)
+        |> addExtraSpace
 
     let headerByteData =
         resourceName
         |> getHttpHeaders
         |> Encoding.UTF8.GetBytes
-    let headerLength = (headerByteData.Length + extraSpace.Length)
-    let headerByteDataWithSpace = Array.zeroCreate headerLength : byte[]
-    headerByteData.CopyTo(headerByteDataWithSpace, 0)
-    extraSpace.CopyTo(headerByteDataWithSpace, headerByteData.Length - 1)
+        |> addExtraSpace
 
-    let combinedLength = (contentByteDataWithSpace.Length + headerByteDataWithSpace.Length)
-    let byteData = Array.zeroCreate combinedLength
-    contentByteDataWithSpace.CopyTo(byteData, 0)
-    headerByteDataWithSpace.CopyTo(byteData, contentByteData.Length - 1)
+    let combinedLength = (contentByteData.Length + headerByteData.Length)
+    let byteData = Array.zeroCreate combinedLength : byte[]
+    headerByteData.CopyTo(byteData, 0)
+    contentByteData.CopyTo(byteData, headerByteData.Length - 1)
     byteData
